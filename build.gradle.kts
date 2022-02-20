@@ -20,6 +20,7 @@ repositories {
 dependencies {
     implementation("io.ktor:ktor-server-core:$ktor_version")
     implementation("io.ktor:ktor-server-tomcat:$ktor_version")
+    implementation("org.junit.jupiter:junit-jupiter:5.8.2")
     testImplementation("io.ktor:ktor-server-tests:$ktor_version")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit:$kotlin_version")
     testImplementation("org.jetbrains.kotlin:kotlin-test:$kotlin_version")
