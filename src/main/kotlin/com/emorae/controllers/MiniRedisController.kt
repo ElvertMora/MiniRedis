@@ -14,12 +14,12 @@ class MiniRedisController(
             get {
                 val parameters = call.request.queryParameters
                 val cmd = parameters["cmd"].toString()
-                call.respondText(redis(cmd) ?: "")
+                call.respondText(redis(cmd))
             }
         }
     }
 
-    private fun redis(cmd: String): String? {
+    private suspend fun redis(cmd: String): String {
         val array = cmd.split(" ")
         val validateKey = array.size > 1 && array[1].validateKey()
         return when (array[0]) {

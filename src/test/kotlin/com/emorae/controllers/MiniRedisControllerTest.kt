@@ -72,7 +72,7 @@ class MiniRedisControllerTest{
     @Test
     fun testGetRest() {
         withTestApplication(Application::module) {
-            handleRequest(HttpMethod.Get, "/my-key").apply {
+            handleRequest(HttpMethod.Get, "/my-key2").apply {
                 assertEquals(HttpStatusCode.OK, response.status())
                 assertEquals("nil", response.content)
             }

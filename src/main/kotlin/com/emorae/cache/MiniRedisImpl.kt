@@ -2,17 +2,20 @@ package com.emorae.cache
 
 import com.emorae.cache.data.Option
 import com.emorae.cache.data.Register
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.time.Duration
-import java.util.Date
+import java.util.*
 
-class MiniRedisImpl : MiniRedis {
-
-    private val cache = mutableMapOf<String, Register>()
+class MiniRedisImpl(
+    private val cache: MutableMap<String, Register>,
+    private val mutex: Mutex
+) : MiniRedis {
 
     override val dbSize: Int
         get() = cache.size
 
-    override fun set(key: String, value: String, option: Option?, duration: Long?): String {
+    override suspend fun set(key: String, value: String, option: Option?, duration: Long?): String {
         if ((option != null) && (option in listOf(
                 Option.EX,
                 Option.PX,
@@ -24,31 +27,37 @@ class MiniRedisImpl : MiniRedis {
         } else {
             val valueSet = mutableSetOf(Pair(1, value))
             when (option) {
-                Option.EX -> cache[key] =
+                Option.EX -> writeRegister(
+                    key,
                     Register(
                         value = valueSet,
                         expiration = Date(Date().time + Duration.ofSeconds(duration!!).toMillis())
                     )
-                Option.PX -> cache[key] =
+                )
+                Option.PX -> writeRegister(
+                    key,
                     Register(value = mutableSetOf(Pair(1, value)), expiration = Date(Date().time + duration!!))
-                Option.EXAT -> cache[key] =
+                )
+                Option.EXAT -> writeRegister(
+                    key,
                     Register(value = valueSet, expiration = Date(Duration.ofSeconds(duration!!).toMillis()))
-                Option.PXAT -> cache[key] = Register(value = valueSet, expiration = Date(duration!!))
-                Option.NX -> if (!cache.containsKey(key)) cache[key] = Register(value = valueSet) else return NIL
-                Option.XX -> if (cache.containsKey(key)) cache[key] = Register(value = valueSet) else return NIL
-                Option.KEEPTTL -> if (cache.containsKey(key)) cache[key] = cache[key]!!.copy(value = valueSet)
+                )
+                Option.PXAT -> writeRegister(key, Register(value = valueSet, expiration = Date(duration!!)))
+                Option.NX -> if (!cache.containsKey(key)) writeRegister(key, Register(value = valueSet)) else return NIL
+                Option.XX -> if (cache.containsKey(key)) writeRegister(key, Register(value = valueSet)) else return NIL
+                Option.KEEPTTL -> if (cache.containsKey(key)) writeRegister(key, cache[key]!!.copy(value = valueSet))
                 Option.GET -> {
                     val oldValue = cache[key]?.value?.first()?.second
-                    cache[key] = Register(value = valueSet)
+                    writeRegister(key, Register(value = valueSet))
                     return oldValue ?: NIL
                 }
-                null -> cache[key] = Register(value = valueSet)
+                null -> writeRegister(key, Register(value = valueSet))
             }
             return "OK"
         }
     }
 
-    override fun get(key: String): String {
+    override suspend fun get(key: String): String {
         if (!cache.containsKey(key)) {
             return NIL
         }
@@ -58,13 +67,15 @@ class MiniRedisImpl : MiniRedis {
             expiration == null -> value
             expiration.after(Date()) -> value
             else -> {
-                cache.remove(key)
+                mutex.withLock {
+                    cache.remove(key)
+                }
                 NIL
             }
         }
     }
 
-    override fun del(keys: List<String>): Int = keys.map(this::remove).sum()
+    override suspend fun del(keys: List<String>): Int = mutex.withLock { keys.map(this::remove).sum() }
 
     private fun remove(key: String): Int {
         if (cache.containsKey(key)) {
@@ -74,29 +85,38 @@ class MiniRedisImpl : MiniRedis {
         return 0
     }
 
-    override fun incr(key: String): String {
+    override suspend fun incr(key: String): String {
         if (cache.containsKey(key)) {
             val value = cache[key]!!.value.first().second
             return try {
                 val newValue = value.toInt().plus(1)
-                cache[key] = cache[key]!!.copy(value = mutableSetOf(Pair(1, "$newValue")))
+                writeRegister(key, cache[key]!!.copy(value = mutableSetOf(Pair(1, "$newValue"))))
                 "$newValue"
             } catch (e: NumberFormatException) {
                 "the value not is a number: $value"
             }
         }
-        cache[key] = Register(mutableSetOf(Pair(1, "1")))
+
+        writeRegister(key, Register(mutableSetOf(Pair(1, "1"))))
         return "1"
     }
 
-    override fun zAdd(key: String, vararg args: Pair<Int, String>): String {
+    private suspend fun writeRegister(key: String, register: Register) {
+        mutex.withLock {
+            cache[key] = register
+        }
+    }
+
+    override suspend fun zAdd(key: String, vararg args: Pair<Int, String>): String {
         if (cache.containsKey(key)) {
             val register = cache[key]
-            register?.value?.addAll(args)
+            mutex.withLock {
+                register?.value?.addAll(args)
+            }
         } else {
             val newRegister = Register()
             newRegister.value.addAll(args)
-            cache[key] = newRegister
+            writeRegister(key, newRegister)
         }
         return "${args.size}"
     }
@@ -140,7 +160,7 @@ class MiniRedisImpl : MiniRedis {
         cache.clear()
     }
 
-    companion object{
+    companion object {
         private const val NIL = "nil"
     }
 
